@@ -58,6 +58,11 @@ class ToyDB:
     def _get_data_file(self, index: int) -> pathlib.Path:
         return self.path / f"data{index}.db"
 
+    async def drop(self) -> None:
+        """Drops the entire database."""
+        for file in self.files:
+            file.unlink(missing_ok=True)
+
     async def compact(self, index: int | None = None) -> None:
         """Compact the data file at the index, defaults to the current data file."""
         if not index:

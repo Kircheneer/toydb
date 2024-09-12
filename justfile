@@ -1,3 +1,5 @@
+set positional-arguments
+
 test:
     uv run pytest
 
@@ -10,3 +12,6 @@ shell:
 
 mypy:
     uv run mypy -p toydb
+
+serve:
+    uv run fastapi dev ./toydb/app.py

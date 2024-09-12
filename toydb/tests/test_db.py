@@ -1,4 +1,6 @@
+import asyncio
 import os
+from functools import partial
 
 import pytest
 
@@ -56,3 +58,15 @@ async def test_compact(db):
     assert size_before_compact > size_after_compact
     assert await db.get("present") == "value"
     assert await db.get("deleted") is None
+
+
+@pytest.mark.skip
+def test_performance(db, benchmark):
+    """WIP attempt at some performance testing."""
+    for i in range(1000):
+        asyncio.run(db.set(str(i), str(i)))
+
+    def to_benchmark():
+        asyncio.run(db.get(key="0"))
+
+    benchmark(to_benchmark)
