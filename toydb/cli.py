@@ -86,7 +86,7 @@ def drop(force: bool = False) -> int:
     if not force:
         if not Confirm.ask("Are you sure?"):
             return 1
-    endpoint = urljoin(state["url"], f"v1/db")
+    endpoint = urljoin(state["url"], "v1/db")
     try:
         result = httpx.delete(endpoint)
     except httpx.ConnectError as error:
@@ -103,5 +103,5 @@ def drop(force: bool = False) -> int:
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app()

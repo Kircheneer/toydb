@@ -38,7 +38,9 @@ async def get_value(key: str, db: ToyDB = Depends(get_db)) -> GetValueResponse:
 
 
 @app.post("/v1/db/{key}")
-async def set_value(key: str, value: SetValueRequest, db: ToyDB = Depends(get_db)) -> SetValueResponse:
+async def set_value(
+    key: str, value: SetValueRequest, db: ToyDB = Depends(get_db)
+) -> SetValueResponse:
     await db.set(key, value.value)
     return SetValueResponse()
 
