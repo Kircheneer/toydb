@@ -11,6 +11,14 @@ def db(tmp_path):
     return ToyDB(tmp_path)
 
 
+def test_db_files_reversed(db):
+    """Test that the `files_reversed` decorator is working properly."""
+    db.data_file_index = 0
+    assert len(list(db.files_reversed)) == 1
+    db.data_file_index = 1
+    assert len(list(db.files_reversed)) == 2
+
+
 @pytest.mark.asyncio
 async def test_db_set_and_get(db):
     assert await db.get("key") is None

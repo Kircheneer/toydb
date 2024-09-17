@@ -3,6 +3,7 @@ import dataclasses
 import os.path
 import pathlib
 from builtins import str
+from collections import defaultdict
 from enum import IntEnum
 from typing import Generator, Self
 
@@ -129,6 +130,10 @@ class ToyDB:
                 break
             self.data_file_index += 1
 
+        # In-memory cache for each file that maps keys to the respective byte offset
+        # TODO: Pre-warm the cache on class startup.
+        self.cache: dict[pathlib.Path, dict[str, int]] = defaultdict(dict)
+
     @property
     def file(self) -> pathlib.Path:
         """Get the path to the current data file."""
@@ -138,6 +143,11 @@ class ToyDB:
     def files(self) -> Generator[pathlib.Path, None, None]:
         """Get all data files."""
         return (self._get_data_file(i) for i in range(self.data_file_index + 1))
+
+    @property
+    def files_reversed(self) -> Generator[pathlib.Path, None, None]:
+        """Get all data files in reverse order."""
+        return (self._get_data_file(i) for i in range(self.data_file_index, -1, -1))
 
     def _get_data_file(self, index: int) -> pathlib.Path:
         return self.path / f"data{index}.db"
@@ -149,6 +159,8 @@ class ToyDB:
         """Drops the entire database."""
         for file in self.files:
             file.unlink(missing_ok=True)
+            # If we are dropping the DB we don't care about cache misses.
+            self.cache.pop(file, None)
 
     async def iterate(
         self, index: int | None = None
@@ -227,14 +239,16 @@ class ToyDB:
 
     async def get(self, key: str) -> str | None:
         """Get the value behind the given key or None if it isn't present."""
-        value = None
-        async for record in self.iterate():
-            if record.key == key.encode(self.encoding):
-                if record.tombstone:
-                    value = None
-                else:
-                    value = record.value
-        return value.decode(self.encoding) if value else None
+        for current_file in self.files_reversed:
+            byte_offset = self.cache[current_file].get(key, None)
+            if byte_offset is not None:
+                async with aiofiles.open(current_file, "br") as file:
+                    await file.seek(byte_offset)
+                    record = await ToyDBRecord.deserialize(file)
+                    if record.tombstone:
+                        return None
+                    return record.value.decode(self.encoding)
+        return None
 
     async def set(self, key: str, value: str) -> None:
         """Set the given key to the given value."""
@@ -243,13 +257,29 @@ class ToyDB:
             value=value.encode(self.encoding),
             tombstone=False,
         )
-        async with aiofiles.open(self.file, "ba") as file:
-            await file.write(record.serialize())
-        if os.path.getsize(self.file) > self.max_file_size:
+        serialized_record = record.serialize()
+        if (
+            self.file.exists()
+            and (os.path.getsize(self.file) + len(serialized_record))
+            > self.max_file_size
+        ):
             self.data_file_index += 1
+        byte_offset = os.path.getsize(self.file) if self.file.exists() else 0
+        async with aiofiles.open(self.file, "ba") as file:
+            await file.write(serialized_record)
+        self.cache[self.file][key] = byte_offset
 
     async def delete(self, key: str) -> None:
         """Delete the given key."""
         record = ToyDBRecord(key=key.encode(self.encoding), value=None, tombstone=True)
+        serialized_record = record.serialize()
+        if (
+            self.file.exists()
+            and (os.path.getsize(self.file) + len(serialized_record))
+            > self.max_file_size
+        ):
+            self.data_file_index += 1
+        byte_offset = os.path.getsize(self.file) if self.file.exists() else 0
         async with aiofiles.open(self.file, "ba") as file:
-            await file.write(record.serialize())
+            await file.write(serialized_record)
+        self.cache[self.file][key] = byte_offset
