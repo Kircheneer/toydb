@@ -1,7 +1,12 @@
+"""Database implementation.
+
+TODO: Probably need to do `sys.getsizeof` to get length of `bytes` objects instead of `len`."""
+
 import asyncio
 import dataclasses
 import os.path
 import pathlib
+import sys
 from builtins import str
 from collections import defaultdict
 from enum import IntEnum
@@ -37,6 +42,12 @@ class ToyDBRecord:
         "value",
         "tombstone",
     )
+
+    @property
+    def size_in_bytes(self):
+        """The size in bytes of this record if it were serialized."""
+        # 1 byte key, 1 byte length, n bytes value
+        return 2 + sys.getsizeof(self.value)
 
     def serialize(self) -> bytes:
         """Serialize this record to bytes."""
@@ -117,7 +128,7 @@ class ToyDB:
             raise ToyDBException(f"Path '{self.path}' is not a directory.")
 
         self.encoding = "utf-8"
-        # Artificially low to mage things pertaining to multiple files easier to test
+        # Artificially low to make things pertaining to multiple files easier to test
         self.max_file_size = 255
 
         self.data_file_index = 0
@@ -172,29 +183,53 @@ class ToyDB:
                     yield record
 
     async def merge(self):
-        """Merge file segments.
+        """Merge file segments."""
+        await self.compact_all()
+        new_cache: dict[pathlib.Path, dict[str, int]] = defaultdict(dict)
+        key_record_mapping = {}
+        index = 0
+        async for record in self.iterate():
+            # This would be the size in bytes of the current data file if it were to be written to disk.
+            current_size = sum((r.size_in_bytes for r in key_record_mapping.values()))
+            size_with_record = current_size + record.size_in_bytes
+            if record.key in key_record_mapping:
+                size_with_record -= key_record_mapping[record.key]
+            if size_with_record >= self.max_file_size:
+                async with aiofiles.open(self._get_temp_data_file(index), "ba") as file:
+                    for key, record_to_write in key_record_mapping.items():
+                        new_cache[self._get_data_file(index)][
+                            key.decode(self.encoding)
+                        ] = await file.tell()
+                        if (
+                            new_cache[self._get_data_file(index)][
+                                key.decode(self.encoding)
+                            ]
+                            > self.max_file_size
+                        ):
+                            breakpoint()
+                        await file.write(record_to_write.serialize())
+                index += 1
+                key_record_mapping = {record.key: record}
+            else:
+                key_record_mapping[record.key] = record
+        # Write the last data file out
+        async with aiofiles.open(self._get_temp_data_file(index), "ba") as file:
+            for key, record_to_write in key_record_mapping.items():
+                new_cache[self._get_data_file(index)][
+                    key.decode(self.encoding)
+                ] = await file.tell()
+                await file.write(record_to_write.serialize())
+        await self.drop()
+        for i in range(index):
+            self._get_temp_data_file(i).rename(self._get_data_file(i))
+        self.data_file_index = index
+        self.cache = new_cache
 
-        TODO: This currently doesn't merge anything but just writes all the files again. Whoops!"""
+    async def compact_all(self) -> None:
+        """Compact all data files."""
         await asyncio.gather(
             *[self.compact(index=i) for i in range(self.data_file_index)]
         )
-        buffer = bytes()
-        index = 0
-        async for record in self.iterate():
-            serialized_record = record.serialize()
-            if len(buffer) + len(serialized_record) <= self.max_file_size:
-                buffer += serialized_record
-            else:
-                async with aiofiles.open(
-                    self._get_temp_data_file(index=index), "ba"
-                ) as file:
-                    await file.write(buffer)
-                buffer = serialized_record
-                index += 1
-        await self.drop()
-        for i in range(index):
-            self._get_temp_data_file(index=i).rename(self._get_data_file(index=i))
-        self.data_file_index = index
 
     async def compact(self, index: int | None = None) -> None:
         """Compact the data file at the index, defaults to the current data file."""
@@ -232,6 +267,7 @@ class ToyDB:
                         raise ToyDBException(f"Corrupt DB, unknown type '{other}'.")
         file_to_compact.unlink()
         file_to_compact.touch()
+        self.cache[file_to_compact] = {}
         for key, value in values.items():
             await self.set(key.decode(self.encoding), value.decode(self.encoding))
         for key in tombstones:
@@ -239,6 +275,7 @@ class ToyDB:
 
     async def get(self, key: str) -> str | None:
         """Get the value behind the given key or None if it isn't present."""
+        breakpoint()
         for current_file in self.files_reversed:
             byte_offset = self.cache[current_file].get(key, None)
             if byte_offset is not None:

@@ -63,9 +63,14 @@ async def test_merge(db):
     await db.set("last_key", "last_value")
     # Assert that there are now at least 2 data files
     data_files_before = len(list(db.files))
+    assert data_files_before >= 2
     await db.merge()
     data_files_after = len(list(db.files))
     assert data_files_before > data_files_after
+    for file in db.files:
+        assert (
+            os.path.getsize(file) <= db.max_file_size
+        ), "Data file size after merging violates maximum value"
     # Assert that the first and last values written are both readable
     assert await db.get("first_key") == "first_value"
     assert await db.get("last_key") == "last_value"
@@ -108,6 +113,10 @@ async def test_iterate(db):
     ]
 
     assert [value async for value in db.iterate()] == expected
+
+
+def test_size_in_bytes():
+    assert ToyDBRecord(key=b"key", value=b"value", tombstone=False).size_in_bytes == 3
 
 
 @pytest.mark.skip
