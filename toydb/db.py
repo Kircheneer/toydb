@@ -1,6 +1,4 @@
-"""Database implementation.
-
-TODO: Probably need to do `sys.getsizeof` to get length of `bytes` objects instead of `len`."""
+"""Database implementation."""
 
 import asyncio
 import dataclasses
