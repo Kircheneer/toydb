@@ -59,7 +59,7 @@ async def test_merge(db):
     await db.set("first_key", "first_value")
     # Fill the DB enough that it has to create a second data file
     for i in range(100):
-        await db.set(str(i), str(i * 2))
+        await db.set("0", str(i * 2))
     await db.set("last_key", "last_value")
     # Assert that there are now at least 2 data files
     data_files_before = len(list(db.files))
@@ -115,8 +115,13 @@ async def test_iterate(db):
     assert [value async for value in db.iterate()] == expected
 
 
-def test_size_in_bytes():
-    assert ToyDBRecord(key=b"key", value=b"value", tombstone=False).size_in_bytes == 3
+@pytest.mark.asyncio
+async def test_size_in_bytes(db):
+    await db.set("key", "value")
+    assert (
+        os.path.getsize(db.file)
+        == ToyDBRecord(key=b"key", value=b"value", tombstone=False).size_in_bytes
+    )
 
 
 @pytest.mark.skip

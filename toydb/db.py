@@ -6,7 +6,6 @@ import asyncio
 import dataclasses
 import os.path
 import pathlib
-import sys
 from builtins import str
 from collections import defaultdict
 from enum import IntEnum
@@ -46,8 +45,9 @@ class ToyDBRecord:
     @property
     def size_in_bytes(self):
         """The size in bytes of this record if it were serialized."""
-        # 1 byte key, 1 byte length, n bytes value
-        return 2 + sys.getsizeof(self.value)
+        size_of_key = 2 + len(self.key)
+        size_of_value = 2 + len(self.value)
+        return size_of_key + size_of_value
 
     def serialize(self) -> bytes:
         """Serialize this record to bytes."""
@@ -193,20 +193,13 @@ class ToyDB:
             current_size = sum((r.size_in_bytes for r in key_record_mapping.values()))
             size_with_record = current_size + record.size_in_bytes
             if record.key in key_record_mapping:
-                size_with_record -= key_record_mapping[record.key]
+                size_with_record -= key_record_mapping[record.key].size_in_bytes
             if size_with_record >= self.max_file_size:
                 async with aiofiles.open(self._get_temp_data_file(index), "ba") as file:
                     for key, record_to_write in key_record_mapping.items():
                         new_cache[self._get_data_file(index)][
                             key.decode(self.encoding)
                         ] = await file.tell()
-                        if (
-                            new_cache[self._get_data_file(index)][
-                                key.decode(self.encoding)
-                            ]
-                            > self.max_file_size
-                        ):
-                            breakpoint()
                         await file.write(record_to_write.serialize())
                 index += 1
                 key_record_mapping = {record.key: record}
@@ -220,7 +213,7 @@ class ToyDB:
                 ] = await file.tell()
                 await file.write(record_to_write.serialize())
         await self.drop()
-        for i in range(index):
+        for i in range(index + 1):
             self._get_temp_data_file(i).rename(self._get_data_file(i))
         self.data_file_index = index
         self.cache = new_cache
@@ -275,7 +268,6 @@ class ToyDB:
 
     async def get(self, key: str) -> str | None:
         """Get the value behind the given key or None if it isn't present."""
-        breakpoint()
         for current_file in self.files_reversed:
             byte_offset = self.cache[current_file].get(key, None)
             if byte_offset is not None:
